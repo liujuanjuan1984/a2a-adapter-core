@@ -27,6 +27,38 @@ TERMINAL_RESUBSCRIBE_BEHAVIOR = "replay_terminal_task_once_then_close"
 
 
 @dataclass(frozen=True)
+class DeploymentConditionalMethod:
+    method: str
+    enabled: bool
+    extension_uri: str
+    toggle: str
+    reason_when_disabled: str = "disabled_by_configuration"
+
+    def control_method_flag(self) -> dict[str, Any]:
+        return {
+            "enabled_by_default": False,
+            "config_key": self.toggle,
+        }
+
+    def method_retention(self) -> dict[str, Any]:
+        return {
+            "surface": "extension",
+            "availability": "enabled" if self.enabled else "disabled",
+            "retention": "deployment-conditional",
+            "extension_uri": self.extension_uri,
+            "toggle": self.toggle,
+        }
+
+    def disabled_wire_contract_entry(self) -> dict[str, str] | None:
+        if self.enabled:
+            return None
+        return {
+            "reason": self.reason_when_disabled,
+            "toggle": self.toggle,
+        }
+
+
+@dataclass(frozen=True)
 class SessionQueryMethodContract:
     method: str
     required_params: tuple[str, ...] = ()
@@ -174,3 +206,113 @@ INTERRUPT_CALLBACK_METHOD_CONTRACTS: dict[str, InterruptMethodContract] = {
 INTERRUPT_CALLBACK_METHODS: dict[str, str] = {
     key: contract.method for key, contract in INTERRUPT_CALLBACK_METHOD_CONTRACTS.items()
 }
+
+
+@dataclass(frozen=True)
+class JsonRpcCapabilitySnapshot:
+    conditional_methods: dict[str, DeploymentConditionalMethod]
+
+    def is_method_enabled(self, method: str) -> bool:
+        conditional_method = self.conditional_methods.get(method)
+        if conditional_method is None:
+            return True
+        return conditional_method.enabled
+
+    def supported_jsonrpc_methods(self) -> list[str]:
+        methods = list(CORE_JSONRPC_METHODS)
+        for contract in SESSION_QUERY_METHOD_CONTRACTS.values():
+            if self.is_method_enabled(contract.method):
+                methods.append(contract.method)
+        methods.extend(INTERRUPT_CALLBACK_METHODS.values())
+        return methods
+
+
+def build_session_binding_extension_params() -> dict[str, Any]:
+    return {
+        "metadata_field": SHARED_SESSION_BINDING_FIELD,
+        "behavior": "prefer_metadata_binding_else_create_session",
+        "supported_metadata": [
+            "shared.session.id",
+        ],
+        "notes": [
+            "If metadata.shared.session.id is provided, the server will send the message to that upstream session.",
+            "Otherwise, the server will create a new upstream session and retain the mapping.",
+        ],
+    }
+
+
+def build_model_selection_extension_params() -> dict[str, Any]:
+    return {
+        "metadata_field": SHARED_MODEL_SELECTION_FIELD,
+        "behavior": "prefer_metadata_model_else_upstream_default",
+        "applies_to_methods": ["message/send", "message/stream"],
+        "supported_metadata": [
+            "shared.model.providerID",
+            "shared.model.modelID",
+        ],
+        "fields": {
+            "providerID": f"{SHARED_MODEL_SELECTION_FIELD}.providerID",
+            "modelID": f"{SHARED_MODEL_SELECTION_FIELD}.modelID",
+        },
+    }
+
+
+def build_service_behavior_contract_params() -> dict[str, Any]:
+    return {
+        "classification": SERVICE_BEHAVIOR_CLASSIFICATION,
+        "methods": {
+            "tasks/cancel": {
+                "baseline": "core",
+                "retention": "stable",
+                "idempotency": {
+                    "already_canceled": {
+                        "behavior": CANCEL_IDEMPOTENCY_BEHAVIOR,
+                        "returns_current_state": "canceled",
+                        "error": None,
+                    }
+                },
+            },
+            "tasks/resubscribe": {
+                "baseline": "core",
+                "retention": "stable",
+                "terminal_state_behavior": {
+                    "behavior": TERMINAL_RESUBSCRIBE_BEHAVIOR,
+                    "delivery": "single_task_snapshot",
+                    "closes_stream": True,
+                },
+            },
+        },
+    }
+
+
+def build_wire_contract_params(
+    *,
+    protocol_version: str,
+    capability_snapshot: JsonRpcCapabilitySnapshot,
+) -> dict[str, Any]:
+    return {
+        "protocol_version": protocol_version,
+        "preferred_transport": "HTTP+JSON",
+        "additional_transports": ["JSON-RPC"],
+        "core": {
+            "jsonrpc_methods": list(CORE_JSONRPC_METHODS),
+            "http_endpoints": list(CORE_HTTP_ENDPOINTS),
+        },
+        "extensions": {
+            "jsonrpc_methods": [
+                m
+                for m in capability_snapshot.supported_jsonrpc_methods()
+                if m not in CORE_JSONRPC_METHODS
+            ],
+            "extension_uris": [
+                SESSION_BINDING_EXTENSION_URI,
+                MODEL_SELECTION_EXTENSION_URI,
+                STREAMING_EXTENSION_URI,
+                INTERRUPT_CALLBACK_EXTENSION_URI,
+                COMPATIBILITY_PROFILE_EXTENSION_URI,
+                WIRE_CONTRACT_EXTENSION_URI,
+            ],
+        },
+        "all_jsonrpc_methods": capability_snapshot.supported_jsonrpc_methods(),
+        "service_behaviors": build_service_behavior_contract_params(),
+    }

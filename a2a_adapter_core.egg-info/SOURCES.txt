@@ -1,7 +1,0 @@
-README.md
-pyproject.toml
-a2a_adapter_core.egg-info/PKG-INFO
-a2a_adapter_core.egg-info/SOURCES.txt
-a2a_adapter_core.egg-info/dependency_links.txt
-a2a_adapter_core.egg-info/requires.txt
-a2a_adapter_core.egg-info/top_level.txt

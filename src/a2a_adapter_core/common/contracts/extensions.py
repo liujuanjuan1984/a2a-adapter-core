@@ -34,8 +34,84 @@ class SessionQueryMethodContract:
     unsupported_params: tuple[str, ...] = ()
     result_fields: tuple[str, ...] = ()
     items_type: str | None = None
+    items_field: str | None = None
     notification_response_status: int | None = None
     pagination_mode: str | None = None
+    execution_binding: str | None = None
+    session_binding: str | None = None
+    uses_upstream_session_context: bool | None = None
+    notes: tuple[str, ...] = ()
+
+
+SESSION_QUERY_PAGINATION_MODE = "limit"
+SESSION_QUERY_PAGINATION_BEHAVIOR = "mixed"
+SESSION_QUERY_DEFAULT_LIMIT = 20
+SESSION_QUERY_MAX_LIMIT = 100
+SESSION_QUERY_PAGINATION_PARAMS: tuple[str, ...] = ("limit",)
+SESSION_QUERY_PAGINATION_UNSUPPORTED: tuple[str, ...] = ("cursor", "page", "size")
+
+SESSION_QUERY_METHOD_CONTRACTS: dict[str, SessionQueryMethodContract] = {
+    "list_sessions": SessionQueryMethodContract(
+        method="a2a.sessions.list",
+        optional_params=("limit", "query.limit"),
+        unsupported_params=SESSION_QUERY_PAGINATION_UNSUPPORTED,
+        result_fields=("items",),
+        items_type="Task[]",
+        items_field="items",
+        notification_response_status=204,
+        pagination_mode=SESSION_QUERY_PAGINATION_MODE,
+    ),
+    "get_session_messages": SessionQueryMethodContract(
+        method="a2a.sessions.messages.list",
+        required_params=("session_id",),
+        optional_params=("limit", "query.limit"),
+        unsupported_params=SESSION_QUERY_PAGINATION_UNSUPPORTED,
+        result_fields=("items",),
+        items_type="Message[]",
+        items_field="items",
+        notification_response_status=204,
+        pagination_mode=SESSION_QUERY_PAGINATION_MODE,
+    ),
+    "prompt_async": SessionQueryMethodContract(
+        method="a2a.sessions.prompt_async",
+        required_params=("session_id", "request.parts"),
+        optional_params=(
+            "request.messageID",
+            "request.agent",
+            "request.system",
+            "request.variant",
+        ),
+        result_fields=("ok", "session_id", "turn_id"),
+        notification_response_status=204,
+    ),
+    "command": SessionQueryMethodContract(
+        method="a2a.sessions.command",
+        required_params=("session_id", "request.command"),
+        optional_params=(
+            "request.arguments",
+            "request.messageID",
+        ),
+        result_fields=("item",),
+        notification_response_status=204,
+    ),
+}
+
+SESSION_QUERY_METHODS: dict[str, str] = {
+    key: contract.method for key, contract in SESSION_QUERY_METHOD_CONTRACTS.items()
+}
+
+SESSION_CONTROL_METHOD_KEYS: tuple[str, ...] = ("prompt_async", "command")
+SESSION_CONTROL_METHODS: dict[str, str] = {
+    key: SESSION_QUERY_METHODS[key] for key in SESSION_CONTROL_METHOD_KEYS
+}
+
+SESSION_QUERY_ERROR_BUSINESS_CODES: dict[str, int] = {
+    "SESSION_NOT_FOUND": -32001,
+    "SESSION_FORBIDDEN": -32006,
+    "UPSTREAM_UNREACHABLE": -32002,
+    "UPSTREAM_HTTP_ERROR": -32003,
+    "UPSTREAM_PAYLOAD_ERROR": -32005,
+}
 
 
 @dataclass(frozen=True)
